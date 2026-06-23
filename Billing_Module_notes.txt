@@ -1,0 +1,101 @@
+You are helping me build the **Fluffy Wholesale Billing Module** — a new, standalone project that depends on OrdeRR, our existing order-parsing app. Read everything below fully before doing anything.
+
+---
+
+## THE FRD (source of truth — FRD wins over anything else if there's a conflict)
+
+<frd>
+[PASTE the full contents of billing-module-frd.md here]
+</frd>
+
+---
+
+## THE ORDERR CODEBASE (summarised for context — full repo is attached)
+
+OrdeRR is a FastAPI app. Key facts you need:
+
+**Stack:** Python, FastAPI, SQLAlchemy 2.0, PostgreSQL on Render (also SQLite locally), Jinja2 templates, APScheduler, Anthropic SDK, uvicorn. Deployed on Render via `render.yaml`.
+
+**Package layout:** Everything lives under a top-level `app/` folder (i.e. `from app.database import Base`, `from app.models.order import Order`). This `app/` name will collide if installed naively — packaging step must rename it.
+
+**Database (`app/database.py`):**
+- `DATABASE_URL` from env, auto-fixes `postgres://` → `postgresql://`
+- SQLAlchemy engine with `pool_pre_ping=True`, `pool_size=5`, `max_overflow=2`
+- `Base` is `DeclarativeBase`; `get_db()` yields a session
+
+**Key models (all import from `app.database.Base`):**
+- `Order` (`orders` table): `id`, `customer_phone`, `customer_name`, `raw_message`, `is_photo_order`, `parsed_items` (JSON/JSONB), `unclear_items` (JSON/JSONB), `delivery_date` (String YYYY-MM-DD), `business_date` (String, indexed), `status`, `is_cancelled`, `is_unclear`, `plant_name`, `created_at`, `updated_at`
+- `Customer` (`customers` table): `id`, `phone_number` (unique), `restaurant_name`, `owner_name`, `address`, `city`, `area`, `is_active`, `is_daily_order_customer`, `salesperson_id` (FK), `ledger_token`, `onboarding_status`, `created_at`
+- Also: `InboundMessage`, `CustomerProductAlias`, `CustomerProductStats`, `Salesperson`, `NoisePhrases`, `UnclearItemAlias`
+
+**Key services:**
+- `reporter.py` — `send_daily_report(db)`: queries orders by `business_date`, groups by customer, formats a per-customer item list, sends via SMTP email (`REPORT_EMAIL`/SMTP config) and WhatsApp template. Uses `MANAGER_PHONE`, `PLANT_NAME`, `IST` timezone env vars.
+- `template_parser.py` — core parsing pipeline (product alias matching, multi-item-per-line splitting, unit inference). This is what rate-message parsing should reuse.
+- `order_service.py` — includes `get_current_business_date_str()` (used everywhere for business date logic)
+- `webhook.py` — FastAPI router handling WhatsApp inbound messages. Currently: if message is text → `process_incoming_order()`. Images are not yet routed differently for staff senders. The `NON_ORDER_STATUSES` set controls flow branching. Rate-limiting is in-memory per phone.
+
+**Env vars OrdeRR uses:** `DATABASE_URL`, `MANAGER_PHONE`, `PLANT_NAME`, `REPORT_EMAIL`, `SMTP_*`, `WHATSAPP_TOKEN`, `PHONE_NUMBER_ID`, `VERIFY_TOKEN`, `ANTHROPIC_API_KEY`
+
+**No `pyproject.toml` or `setup.py` exists yet** — packaging step is required before billing can import it.
+
+---
+
+## WHAT I NEED YOU TO BUILD
+
+The **Fluffy Billing Module** — a separate FastAPI repo/service. Full spec is in the FRD above. Summary of what it does:
+- Manages daily product rates (via WhatsApp message or dashboard form)
+- Manages customer-specific rate overrides (dashboard only)
+- Captures actual (weighed) quantities per order line — via dispatch photo OCR or manual dashboard entry
+- Computes invoices (rate × actual quantity, no rounding, no GST) and outputs a formatted bill file (PDF/image matching our paper bill layout — **I will send you the paper bill sample before you build the bill template; ask me for it when you reach that step**)
+- Generates bill files into an output folder for the accountant to transcribe into VasyERP manually (Phase 1 — no direct ERP integration)
+
+**This is Phase 1 only.** No payments, no ledger, no customer-facing delivery.
+
+---
+
+## NON-NEGOTIABLE ARCHITECTURE RULES
+
+1. **Separate repo/service** — do not add billing code into OrdeRR.
+2. **One-way code dependency** — billing imports OrdeRR; OrdeRR never imports billing. One exception: OrdeRR's webhook makes a runtime HTTP call to billing's dispatch-photo API (not a code dependency — configured via env var).
+3. **OrdeRR must be packaged first** — rename `app/` to `orderr_core/` (or equivalent distinct name), add `pyproject.toml`, tag `v1.0.0`. Billing installs it as: `orderr-core @ git+https://github.com/<org>/orderr.git@v1.0.0` — always pinned to a tag, never `@main`.
+4. **Shared DB, split schema ownership** — same `DATABASE_URL`. OrdeRR owns its existing tables. Billing owns and migrates only: `daily_rates`, `customer_rate_overrides`, `order_item_actuals`, `invoices`, `invoice_items`. The `payments` table is schema-only in the FRD — do NOT build it in Phase 1.
+5. **No silent wrong billing** — every billed value must trace to a confident auto-match or explicit human confirmation.
+6. **No rounding** — paise/decimal precision throughout.
+7. **Invoice numbering** — `FLUFFY-YYYYMMDD-NNN` (date-based, zero-padded sequence per day).
+8. **Missing rate** → use most recent prior rate, flagged "not confirmed today" — never bill ₹0.
+9. **Rate lookup priority** — customer override (if active) beats daily rate.
+10. **Unclear Bills scope** — if any item for a customer is flagged, hold that customer's entire billing until resolved (not just the one line).
+11. **OCR confidence = legibility only** — do NOT compare actual vs ordered quantity as a plausibility check; that was deliberately ruled out (FRD §5.3).
+12. **Billing does not write to OrdeRR's tables** — read-only access to `orders`, `customers`, etc.
+13. **`reporter.py` reads billing tables via raw SQL** — no import of billing's package; consistent with rule 2.
+14. **Mobile-first dashboard** — all dashboard screens must work cleanly on a phone.
+
+---
+
+## BUILD ORDER — follow this sequence, confirm each step works before the next
+
+1. **Package OrdeRR** — rename top-level `app/` → `orderr_core/`, add `pyproject.toml` with package name `orderr-core`, update all internal imports, tag `v1.0.0`. Keep change minimal — only what's needed for installability. Do not touch any logic.
+
+2. **Scaffold billing repo** — FastAPI app, install `orderr-core` pinned to that tag, verify you can `from orderr_core.models.order import Order` and connect to the shared DB.
+
+3. **`daily_rates` table + rate-message parsing** (reusing OrdeRR's parser via the import) + dashboard fallback form.
+
+4. **`customer_rate_overrides` + dashboard management screen.**
+
+5. **`order_item_actuals` + dashboard "Confirm & Bill" manual screen** — get this working end-to-end before adding OCR. This alone should let us generate accurate bills manually.
+
+6. **`invoices`/`invoice_items` computation + bill-file rendering** into output folder. **Ask me for the paper bill sample before building the template** — do not guess the layout.
+
+7. **Photo/OCR dispatch-photo capture** — vision model reads handwritten sheet, maps to order lines by report structure, confidence = legibility only. Illegible → "Unclear Bills" queue.
+
+8. **WhatsApp routing change in OrdeRR's webhook** — if inbound message is an image AND sender is a known staff number → forward to billing's dispatch-photo API (HTTP call, not import). Add a staff-number config/list to OrdeRR. Keep the change minimal; don't touch parsing logic.
+
+9. **Dashboard controls** — per-order "Invoice" button (disables once billed, idempotent per §5.3b); "All Invoices" bulk button (silently skips not-ready orders).
+
+10. **Reporting feedback loop** — update `reporter.py` in OrdeRR to query billing's `invoices`/`invoice_items`/`order_item_actuals` tables via read-only SQL (no import), showing billed status + actual quantity alongside ordered quantity, plus a daily summary count.
+
+---
+
+## START HERE
+
+Confirm you've read the FRD and this brief fully. Then walk me through **Step 1** (packaging OrdeRR) — tell me exactly what files you'll change and what the new import paths will look like, before writing any code.
