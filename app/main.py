@@ -10,6 +10,8 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+
+
 from app.database import engine, Base
 # Import all models so Base.metadata has them registered before create_all()
 import app.models  # noqa: F401
@@ -53,6 +55,8 @@ def orderr_check():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+
 # ── Routers (added incrementally per build step) ─────────────────────────
-# Step 3+: from app.routes.rates import router as rates_router
-#           app.include_router(rates_router, prefix="/rates", tags=["rates"])
+
+from app.routes.rates import router as rates_router
+app.include_router(rates_router)

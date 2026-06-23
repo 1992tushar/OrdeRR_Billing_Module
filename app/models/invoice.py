@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy import Integer, String, Numeric, Date, DateTime, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
-
+from sqlalchemy import Integer, String, Numeric, Date, DateTime, func, UniqueConstraint, ForeignKey
 
 class Invoice(Base):
     __tablename__ = "invoices"
@@ -41,7 +41,9 @@ class InvoiceItem(Base):
     __tablename__ = "invoice_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    invoice_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    invoice_id: Mapped[int] = mapped_column(
+    Integer, ForeignKey("invoices.id"), nullable=False, index=True
+    )
     product: Mapped[str] = mapped_column(String, nullable=False)
     quantity: Mapped[float] = mapped_column(Numeric(10, 3), nullable=False)
     unit: Mapped[str] = mapped_column(String(10), nullable=False)        # 'kg' | 'nos'
