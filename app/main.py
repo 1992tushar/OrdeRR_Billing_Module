@@ -9,11 +9,9 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-
-
+from app.routes.invoices import router as invoices_router
 
 from app.database import engine, Base
-# Import all models so Base.metadata has them registered before create_all()
 import app.models  # noqa: F401
 
 # ── Create billing-owned tables (idempotent) ─────────────────────────────
@@ -25,20 +23,14 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(invoices_router)
 
 @app.get("/health")
 def health():
-    """Liveness check — also used by OrdeRR webhook to confirm billing is up."""
     return JSONResponse({"status": "ok", "service": "fluffy-billing"})
 
-
-# ── Verify OrdeRR models are importable (architecture check) ─────────────
 @app.get("/debug/orderr-check")
 def orderr_check():
-    """
-    Confirms orderr_core is installed and DB is reachable.
-    Remove or auth-gate before production.
-    """
     try:
         from orderr_core.models.order import Order
         from orderr_core.models.customer import Customer
@@ -54,9 +46,9 @@ def orderr_check():
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-
-
-# ── Routers (added incrementally per build step) ─────────────────────────
-
+# ── Routers ───────────────────────────────────────────────────────────────
 from app.routes.rates import router as rates_router
+from app.routes.billing import router as billing_router
+
 app.include_router(rates_router)
+app.include_router(billing_router)

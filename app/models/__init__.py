@@ -3,6 +3,7 @@ from app.models.rate_override import CustomerRateOverride
 from app.models.actuals import OrderItemActual
 from app.models.invoice import Invoice, InvoiceItem
 from app.models.rate_unclear import RateUnclearItem
+from app.models.ocr_unmatched import OcrUnmatchedLine
 
 __all__ = [
     "DailyRate",

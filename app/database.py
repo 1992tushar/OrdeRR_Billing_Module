@@ -6,8 +6,11 @@ Billing owns: daily_rates, customer_rate_overrides, order_item_actuals,
 Billing NEVER writes to OrdeRR's tables.
 """
 import os
+from dotenv import load_dotenv
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
+load_dotenv()  # reads .env from cwd by default
 
 # Reuse OrdeRR's DATABASE_URL — same DB, billing just owns different tables.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -19,8 +22,9 @@ if DATABASE_URL.startswith("postgres://"):
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=3,       # conservative — two services share one DB plan
+    pool_size=3,
     max_overflow=1,
+    connect_args={"sslmode": "require"},  # add this line
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
