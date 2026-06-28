@@ -13,5 +13,4 @@ num2words==0.5.14
 python-barcode==0.15.1
 Pillow==11.3.0
 pytesseract==0.3.13
-orderr-core @ git+https://github.com/1992tushar/OrdeRR.git@v1.0.0
-pip install beautifulsoup4
+orderr-core @ git+https://github.com/1992tushar/OrdeRR.git@v1.1.0
