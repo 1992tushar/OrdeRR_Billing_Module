@@ -7,7 +7,7 @@ Key rules:
 - amount = qty × rate_used (no rounding, keep paise).
 - Invoice number format: FLUFFY-YYYYMMDD-NNN (zero-padded 3-digit sequence per day).
 - status: 'draft' | 'sent' | 'paid' | 'partial' | 'void'
-- rate_source: 'daily_rate' | 'customer_override'
+- rate_source: 'daily_rate' | 'customer_override' | 'carried_forward_rate'
 """
 from datetime import date, datetime
 from typing import Optional
@@ -49,6 +49,6 @@ class InvoiceItem(Base):
     unit: Mapped[str] = mapped_column(String(10), nullable=False)        # 'kg' | 'nos'
     rate_used: Mapped[float] = mapped_column(Numeric(10, 4), nullable=False)  # snapshotted, never changes
     amount: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)     # qty × rate_used
-    rate_source: Mapped[str] = mapped_column(String(20), nullable=False)      # 'daily_rate' | 'customer_override'
+    rate_source: Mapped[str] = mapped_column(String(30), nullable=False)      # 'daily_rate' | 'customer_override' | 'carried_forward_rate'
 
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="items")

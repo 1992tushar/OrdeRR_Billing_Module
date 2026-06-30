@@ -53,6 +53,8 @@ from app.services.ocr_actuals_parser import parse_claude_hotel_rows
 from app.services.ocr_engine import OCREngineError, get_production_report_engine
 from app.services.rate_lookup import get_rate
 from app.services.rate_parser import ACTIVE_PRODUCTS
+from app.models.rate_override import CustomerRateOverride
+
 import json
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -166,6 +168,52 @@ async def api_save_rates(request: Request, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "saved": saved}
 
+
+@router.post("/billing/api/save-customer-rate")
+async def api_save_customer_rate(request: Request, db: Session = Depends(get_db)):
+    body = await request.json()
+    customer_phone = (body.get("customer_phone") or "").strip()
+    rates = body.get("rates") or []
+
+    if not customer_phone:
+        return JSONResponse(status_code=400, content={"error": "No customer selected"})
+
+    today = _today()
+    saved = []
+
+    for item in rates:
+        product = (item.get("product") or "").strip()
+        unit    = (item.get("unit") or "kg").strip()
+        try:
+            rate_value = float(item.get("rate") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not product or rate_value <= 0:
+            continue
+
+        # Deactivate any currently-active override for this customer+product
+        active = db.scalars(
+            select(CustomerRateOverride).where(
+                CustomerRateOverride.customer_phone == customer_phone,
+                CustomerRateOverride.product == product,
+                CustomerRateOverride.effective_to.is_(None),
+            )
+        ).all()
+        for ov in active:
+            ov.effective_to = today
+
+        db.add(CustomerRateOverride(
+            customer_phone=customer_phone,
+            product=product,
+            rate_per_unit=rate_value,
+            unit=unit,
+            effective_from=today,
+            effective_to=None,
+        ))
+        saved.append(product)
+
+    db.commit()
+    return {"ok": True, "saved": saved}
 
 # ---------------------------------------------------------------------------
 # Seeding: turn an orderr-core order into OrderItemActual + OcrUnmatchedLine

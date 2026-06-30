@@ -130,18 +130,15 @@ def generate_invoice(
                 "Add a daily rate or customer override before billing."
             )
 
-        # Hold: only a stale (prior-day) rate is available — too risky to bill
-        # silently. Operator must confirm today's rate first.
-        if rr.source == "stale_daily_rate":
-            raise InvoiceHoldError(
-                f"Cannot generate invoice: rate for [{actual.product}] is from "
-                f"{rr.rate_date} (no rate entered for {business_date}). "
-                "Enter today's rate or add a customer override before billing."
-            )
+# Stale (prior-day) rates are billable — your rates don't change
+        # daily, so "no rate today" just means "use the last one on file."
+        if rr.source == "override":
+            rate_source = "customer_override"
+        elif rr.source == "stale_daily_rate":
+            rate_source = "carried_forward_rate"
+        else:
+            rate_source = "daily_rate"
 
-        # rr.source is "override" or "daily_rate" — safe to bill
-        # Normalise source to the two values stored in invoice_items.rate_source
-        rate_source = "customer_override" if rr.source == "override" else "daily_rate"
         rate = Decimal(str(rr.rate_per_unit))
         amount = qty * rate
         subtotal += amount

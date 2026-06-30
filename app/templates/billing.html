@@ -278,18 +278,19 @@ main{max-width:900px;margin:0 auto;padding:24px 18px 80px}
 <div class="view" id="view-rates">
   <div class="card">
     <div class="card-head">
-      <span class="card-title">Today's product rates</span>
+      <span class="card-title" id="rates-card-title">Today's product rates</span>
       <span id="rates-saved-chip" style="display:none;font-size:12px;color:var(--green);font-weight:600">Saved</span>
     </div>
     <div class="card-body" style="padding-top:14px;padding-bottom:0">
       <div style="margin-bottom:14px">
-        <label for="cust-select" style="font-size:12px;font-weight:600;color:var(--ink2);margin-right:8px">Show overrides for customer:</label>
+        <label for="cust-select" style="font-size:12px;font-weight:600;color:var(--ink2);margin-right:8px">Edit rates for customer:</label>
         <select id="cust-select"
                 style="padding:6px 10px;border:1px solid var(--border-strong);border-radius:7px;font-size:13px;background:var(--surface)"
                 onchange="rerenderRates()">
-          <option value="">- default rates only -</option>
+          <option value="">- all customers (default rates) -</option>
         </select>
       </div>
+      <div id="rates-scope-note" style="font-size:12px;color:var(--ink3);margin-bottom:10px"></div>
     </div>
     <div style="padding:0">
       <table class="rates-tbl">
@@ -367,12 +368,11 @@ function fmts(iso){
   document.getElementById('date-label').textContent = fmt(today);
   await Promise.all([loadRates(), refreshTodayView()]);
 
+  // No forced tab switch -- land on Today regardless of pending status.
+  // Manual entry is available right on the Today cards, so photo upload
+  // is no longer the only way to confirm a pending hotel.
   if(hotelResults.length > 0 && hotelResults.every(h=>h.status==='pending')){
-    goView('upload');
-    setProgBar(0, hotelResults.length);
-    document.getElementById('report-ok-banner').style.display='flex';
-    document.getElementById('report-ok-text').textContent =
-      hotelResults.length + ' hotel(s) ordered today - upload a photo to confirm delivery';
+    showToast(hotelResults.length + ' hotel(s) ordered today - upload a photo or enter quantities manually below');
   }
 })();
 
@@ -520,6 +520,9 @@ function toggleCard(orderId){
 }
 
 function buildPendingBody(h){
+  // Manual fallback: pending items already have actual_id seeded by the
+  // backend (_ensure_order_seeded), so the same /billing/api/fix-item
+  // endpoint used for "needs review" rows works here too -- no photo required.
   const wrap = document.createElement('div');
   let rows = '';
   (h.items||[]).forEach(it=>{
@@ -830,6 +833,7 @@ async function loadRates(){
     window._ratesData = d;
     document.getElementById('date-label').textContent = fmt(today);
     const sel = document.getElementById('cust-select');
+    sel.innerHTML = '<option value="">- all customers (default rates) -</option>';
     (d.customers||[]).forEach(c=>{
       const o=document.createElement('option');
       o.value=c.phone; o.textContent=c.name;
@@ -841,7 +845,22 @@ async function loadRates(){
 
 function rerenderRates(){
   const tbody = document.getElementById('rates-tbody');
-  const selectedPhone = document.getElementById('cust-select').value;
+  const sel = document.getElementById('cust-select');
+  const selectedPhone = sel.value;
+  const custName = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '';
+
+  // Make the editing scope unmistakable: which save endpoint this will hit
+  // and who it affects, since the same form now serves two purposes.
+  const titleEl = document.getElementById('rates-card-title');
+  const noteEl  = document.getElementById('rates-scope-note');
+  if(selectedPhone){
+    titleEl.textContent = 'Rates for ' + custName + ' (override)';
+    noteEl.textContent = 'Saving here creates/updates a customer-specific override for ' + custName + ' only. It will not change the rate for any other customer.';
+  } else {
+    titleEl.textContent = "Today's product rates (all customers)";
+    noteEl.textContent = 'Saving here changes the default rate for every customer who does not have their own override.';
+  }
+
   const overrideMap = {};
   const d = window._ratesData || {};
   if(selectedPhone && d.customer_overrides){
@@ -862,7 +881,7 @@ function rerenderRates(){
     tr.innerHTML =
       '<td><span class="product-name">'+p.product+'</span>' +
       '<span class="unit-badge">'+p.unit+'</span>' +
-      (p.stale ? '<span class="stale-tag">stale - '+p.rate_date+'</span>' : '') +
+      (p.stale ? '<span class="stale-tag">carried forward - '+p.rate_date+'</span>' : '') +
       (hasOverride ? '<span class="stale-tag" style="background:var(--blue-bg);color:var(--blue);border:none">override Rs.'+overrideMap[p.product]+'</span>' : '') +
       '</td>' +
       '<td style="text-align:right"><input class="rate-inp'+(hasOverride?' edited':'')+'" type="number" step="0.01" min="0" value="'+val+'" placeholder="Rs. -" data-product="'+p.product+'" data-unit="'+p.unit+'" oninput="onRateEdit(this)"></td>' +
@@ -881,15 +900,21 @@ async function saveRates(){
   const rates  = [];
   inputs.forEach(i=>{ const v=parseFloat(i.value); if(v>0) rates.push({product:i.dataset.product,unit:i.dataset.unit,rate:v}); });
   if(!rates.length){ showToast('No rates to save'); return; }
-  const r = await fetch('/billing/api/save-rates',{
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({rates})
-  });
+
+  const selectedPhone = document.getElementById('cust-select').value;
+  const url  = selectedPhone ? '/billing/api/save-customer-rate' : '/billing/api/save-rates';
+  const body = selectedPhone
+    ? JSON.stringify({customer_phone: selectedPhone, rates})
+    : JSON.stringify({rates});
+
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body });
   const d = await r.json();
   if(d.ok){
     document.getElementById('rates-saved-chip').style.display='';
-    showToast('Saved '+d.saved.length+' rate(s)');
+    showToast((selectedPhone ? 'Saved override for customer: ' : 'Saved ') + d.saved.length + ' rate(s)');
     setTimeout(()=>document.getElementById('rates-saved-chip').style.display='none',3000);
+    editedRates = {};
+    loadRates();
   } else showToast('Save failed - please retry');
 }
 
